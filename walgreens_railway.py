@@ -411,30 +411,47 @@ def run_once(products: list[dict]) -> bool:
 
     state = load_state()
     any_in_stock = False
+    state_changed = False
 
     for product in products:
         name = product["name"]
         stores = merged[name]
+        current_store_numbers = {s["number"] for s in stores}
+
+        # Get previously known in-stock stores for this product
+        known_stores = set(state.get("in_stock_stores", {}).get(name, []))
+
+        # Find stores that are newly in stock (not previously known)
+        new_stores = [s for s in stores if s["number"] not in known_stores]
+        # Find stores that went out of stock
+        gone_stores = known_stores - current_store_numbers
 
         if stores:
             any_in_stock = True
-            already_alerted = state.get("alerted", {}).get(name)
-            if not already_alerted:
-                log(f"NEW STOCK: {name} at {len(stores)} store(s)!")
-                send_pushover_alert(name, stores, product.get("url", ""))
-                send_discord_alert(name, stores, product.get("url", ""))
-                state.setdefault("alerted", {})[name] = {
-                    "time": datetime.now().isoformat(),
-                    "stores": len(stores),
-                }
-                save_state(state)
-            else:
-                log(f"Still in stock: {name} (already alerted)")
+
+        if new_stores:
+            log(f"NEW STOCK: {name} at {len(new_stores)} new store(s)!")
+            send_pushover_alert(name, new_stores, product.get("url", ""))
+            send_discord_alert(name, new_stores, product.get("url", ""))
+
+        if gone_stores:
+            log(f"{name}: {len(gone_stores)} store(s) went out of stock")
+
+        if not stores and known_stores:
+            log(f"{name}: All stores now out of stock")
+
+        if stores:
+            log(f"{name}: In stock at {len(stores)} store(s) ({len(new_stores)} new)")
         else:
-            if state.get("alerted", {}).get(name):
-                log(f"{name} is now out of stock - will re-alert if restocked")
-                del state["alerted"][name]
-                save_state(state)
+            log(f"{name}: Out of stock everywhere")
+
+        # Update state with current in-stock store numbers
+        if current_store_numbers != known_stores:
+            state.setdefault("in_stock_stores", {})[name] = list(current_store_numbers)
+            state_changed = True
+
+    if state_changed:
+        save_state(state)
 
     return any_in_stock
 
