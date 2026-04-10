@@ -385,8 +385,9 @@ def extract_product_ids(url: str) -> None:
 # Main
 # ---------------------------------------------------------------------------
 
-def run_once(products: list[dict]) -> bool:
-    """Run a single check across all zip codes. Returns True if any product is in stock."""
+def run_once(products: list[dict], silent: bool = False) -> bool:
+    """Run a single check across all zip codes. Returns True if any product is in stock.
+    If silent=True, records state but skips sending alerts (used for baseline scan)."""
     zips_str = ", ".join(WALGREENS_ZIPS)
     log(f"Checking {len(products)} product(s) across {len(WALGREENS_ZIPS)} zip(s): {zips_str}")
 
@@ -430,9 +431,12 @@ def run_once(products: list[dict]) -> bool:
             any_in_stock = True
 
         if new_stores:
-            log(f"NEW STOCK: {name} at {len(new_stores)} new store(s)!")
-            send_pushover_alert(name, new_stores, product.get("url", ""))
-            send_discord_alert(name, new_stores, product.get("url", ""))
+            if silent:
+                log(f"BASELINE: {name} at {len(new_stores)} store(s) (no alert)")
+            else:
+                log(f"NEW STOCK: {name} at {len(new_stores)} new store(s)!")
+                send_pushover_alert(name, new_stores, product.get("url", ""))
+                send_discord_alert(name, new_stores, product.get("url", ""))
 
         if gone_stores:
             log(f"{name}: {len(gone_stores)} store(s) went out of stock")
@@ -468,6 +472,15 @@ def run_continuous(products: list[dict]) -> None:
     for p in products:
         log(f"  - {p['name']}")
 
+    # First run is silent — builds baseline state without alerting.
+    # Prevents re-alerting on every Railway deploy since /tmp gets wiped.
+    log(f"--- Baseline scan (no alerts) ---")
+    try:
+        run_once(products, silent=True)
+    except Exception as e:
+        log(f"Error during baseline scan: {e}")
+
+    log(f"Baseline set. Starting alert-enabled monitoring.")
     check_count = 0
 
     while True:
